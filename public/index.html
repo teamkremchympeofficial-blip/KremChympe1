@@ -479,9 +479,8 @@ Includes:
 
     <div class="card field-card">
       <div class="body">
-        <div class="field-label">Phone Number<span class="req">*</span></div>
+        <div class="field-label">Phone Number</div>
         <input class="answer-input" type="text" id="phone" placeholder="Your answer">
-        <div class="err-text">This is a required question</div>
       </div>
     </div>
 
@@ -878,7 +877,7 @@ function applyBookingStatus(status){
     confirmedBanner.classList.remove('hidden');
     if(headline) headline.textContent = 'Booking Confirmed';
     if(currentBookingId){
-      downloadLink.href = '/api/bookings/' + encodeURIComponent(currentBookingId) + '/receipt-file';
+      downloadLink.href = '/api/bookings/' + encodeURIComponent(currentBookingId) + '/receipt';
       downloadLink.classList.remove('hidden');
     }
     stopStatusPolling();
