@@ -1,27 +1,32 @@
-# Book Adventure With US — Telegram Bot Edition
+# Book Adventure With US — WhatsApp + Live Telegram Confirmation
 
-WhatsApp has been fully removed. Booking notifications and payment receipts
-are now sent through a Telegram Bot from the backend. Customers are never
-redirected to Telegram or WhatsApp — everything happens silently server-side.
+Visitors book on the site, pay, and upload their payment screenshot right
+there. Tapping **Submit** silently sends the full booking (name, contact,
+date, package, amount paid, balance) *and* the receipt image to the tour
+guide on Telegram — with **Confirm / Cancel** buttons attached to that
+message. Whatever the guide taps updates the visitor's screen automatically,
+live, with no refresh needed. A **Chat with Tour Guide on WhatsApp** button
+appears on the same screen once the receipt has been submitted.
 
 ## What's in here
 
 ```
-public/index.html          Customer-facing booking site (same design/pricing/UI)
-public/admin/dashboard.html Hidden admin dashboard (not linked anywhere in the nav)
-server.js                  Express backend + Telegram Bot API integration
-lib/telegram.js            sendMessage / sendPhoto / sendDocument wrapper
-lib/store.js                JSON-file store for tours (chat IDs) + bookings
-lib/auth.js                 Admin login/session handling
-data/tours.json             Tour list + assigned Telegram chat IDs (edited at runtime)
-data/bookings.json          Booking log (created/updated at runtime)
-scripts/hash-password.js    CLI helper to generate the admin passcode hash
+public/index.html            Customer-facing booking site (WhatsApp-branded UI)
+public/admin/dashboard.html  Hidden admin dashboard (add/edit/remove tours + chat IDs)
+server.js                    Express backend + Telegram Bot API integration
+lib/telegram.js              sendMessage / sendPhoto / editMessageCaption / webhook helpers
+lib/store.js                 JSON-file store for tours (chat IDs) + bookings
+lib/auth.js                  Admin login/session handling
+data/tours.json              Tour list + assigned Telegram chat IDs (edited at runtime)
+data/bookings.json           Booking log incl. live status (created/updated at runtime)
+uploads/                     Saved payment receipt images (git-ignored, kept on disk)
+scripts/hash-password.js     CLI helper to generate the admin passcode hash
 ```
 
-**Important:** this needs to run on a Node.js server — it can't be hosted as
-a static site (GitHub Pages, plain S3, etc.), because the Bot Token must
-stay server-side and the admin dashboard needs a backend to authenticate
-against. Any Node host works (Render, Railway, Fly.io, a VPS, etc.).
+**Important:** this needs to run on a Node.js server (e.g. Render, which you're
+already using) — it can't be hosted as a static site, because the Bot Token
+must stay server-side and Telegram needs a real HTTPS endpoint to call back
+into.
 
 ## 1. Install
 
@@ -34,34 +39,32 @@ npm install
 Message [@BotFather](https://t.me/BotFather) on Telegram, send `/newbot`,
 follow the prompts. You'll get a **Bot Token** — keep it secret.
 
-## 3. Run setup and start
+## 3. Configure environment variables
 
-```bash
-npm run setup
-```
+On Render (Dashboard → your service → Environment), set:
 
-It'll ask you to paste the bot token and choose an admin passcode, then
-writes `.env` for you automatically (including hashing the passcode — the
-plaintext is never stored). Then:
+| Variable | Value |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | from BotFather |
+| `ADMIN_PASSWORD_HASH` | run `npm run hash-password -- "your passcode"` locally and paste the output |
+| `NODE_ENV` | `production` |
+| `PUBLIC_URL` | your Render URL, e.g. `https://your-app.onrender.com` |
+| `TELEGRAM_WEBHOOK_SECRET` | any random string, e.g. output of `openssl rand -hex 24` |
 
-```bash
-npm start
-```
+`PUBLIC_URL` + `TELEGRAM_WEBHOOK_SECRET` are what make the guide's
+Confirm/Cancel buttons work — on every boot the server registers itself with
+Telegram at `<PUBLIC_URL>/api/telegram/webhook`, so there's no manual step
+after that; just redeploy once these are set.
 
-Visit `http://localhost:3000` for the booking site.
-
-*(If you'd rather edit `.env` by hand instead of using the prompt, copy
-`.env.example` to `.env` and fill it in yourself — `npm run hash-password --
-"your passcode"` generates just the passcode hash if you need it standalone.)*
+Locally, copy `.env.example` to `.env` and fill in the same values instead.
 
 ## 4. Set each tour's Chat ID
 
 Add the bot to the guide's chat (or a group chat), send any message, then
 open `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser and
 read the `chat.id` field. Group chat IDs are negative numbers (e.g.
-`-100123456789`). Set it either by editing `data/tours.json` directly, or
-from the admin dashboard once the server is running (see below) — no
-redeploy needed either way.
+`-100123456789`). Set it from the admin dashboard (see below) — no redeploy
+needed.
 
 ## 5. Hidden Admin Dashboard
 
@@ -69,11 +72,11 @@ Go to `/admin/dashboard.html` (not linked from the site — bookmark or share
 the URL directly with whoever manages chat IDs). Log in with the passcode
 you hashed in step 3.
 
-From there the admin can, per tour:
-- View the current Telegram Chat ID
-- ✏️ Change it — future bookings for that tour go to the new chat immediately
-- 🗑 Remove it — future bookings for that tour stop being sent to Telegram
-  until a new Chat ID is added (existing bookings/history are untouched)
+From there the admin can:
+- View, ✏️ change, or 🗑 remove any tour's Telegram Chat ID — takes effect
+  on the very next booking, no redeploy
+- **+ Add New Tour** — add a brand-new tour with its own guide/chat ID
+- **Delete Tour** — remove a tour entirely (past bookings are unaffected)
 
 The dashboard **cannot** view or edit the Bot Token, bot username, API
 settings, or message templates — those only exist in `.env` and
@@ -81,38 +84,43 @@ settings, or message templates — those only exist in `.env` and
 
 ## How a booking flows
 
-1. Customer fills out the existing form and submits → the backend saves the
-   booking, generates a Booking ID, and sends a formatted text notification
-   to the assigned tour's Telegram chat via `sendMessage`. Nothing opens on
-   the customer's device.
-2. Customer uploads a payment receipt (JPG/PNG/WEBP/PDF, max 10 MB) and
-   taps **Confirm Payment** → the backend forwards it to the same Telegram
-   chat via `sendPhoto` (images) or `sendDocument` (PDF), captioned with the
-   booking details and Booking ID.
-3. The customer sees "✅ Booking Submitted Successfully" and then
-   "✅ Payment Receipt Sent Successfully" — no Telegram app ever opens for
-   them.
+1. Visitor fills the form, picks a payment method, enters the amount paid,
+   and **uploads their payment receipt screenshot** (JPG/PNG/WEBP, max 10 MB).
+2. Tapping **Submit** sends everything — booking details + receipt — to the
+   backend in one request. The backend saves the receipt, generates a
+   Booking ID, and sends it all to the assigned guide's Telegram chat as a
+   photo with a caption (full breakdown: name, contact, date, package,
+   total, paid, balance) and two buttons: **✅ Confirm Booking** / **❌ Cancel**.
+3. The visitor is shown a "⏳ Waiting Confirmation" screen immediately —
+   this never waits on the guide. The **Chat with Tour Guide on WhatsApp**
+   button appears here too.
+4. The moment the guide taps a button in Telegram, the visitor's screen
+   updates automatically (polling every ~4s): **Confirm** → "✅ Booking
+   Confirmed" plus a **Download Receipt** link; **Cancel** → the screen goes
+   back to "Waiting Confirmation" so the guide can ask for a corrected
+   receipt without the visitor needing to do anything on their end.
 
 ## Security notes
 
-- The Bot Token is read only from `process.env.TELEGRAM_BOT_TOKEN` inside
-  `lib/telegram.js` and is never included in any API response or frontend
-  file.
+- The Bot Token is read only from `process.env.TELEGRAM_BOT_TOKEN` and is
+  never included in any API response or frontend file.
+- The `/api/telegram/webhook` endpoint only accepts calls carrying the exact
+  `TELEGRAM_WEBHOOK_SECRET`, which Telegram echoes back on every real
+  webhook request — anything else gets a 401.
 - The admin passcode is stored as a bcrypt hash; sessions are httpOnly
   cookies, and login attempts are rate-limited.
-- Uploaded receipts are validated by MIME type (JPG/PNG/WEBP/PDF only) and
-  size (≤10 MB) before being forwarded to Telegram.
+- Uploaded receipts are validated by MIME type (JPG/PNG/WEBP only) and size
+  (≤10 MB) before being saved and forwarded to Telegram.
 - Booking submissions carry an idempotency key from the browser so a
   double-tap on Submit can't create duplicate bookings/notifications.
 - Failed Telegram sends are retried with backoff and logged to the server
-  console; a notification failure never blocks the customer's booking from
-  being recorded.
+  console; a notification failure never blocks the receipt from being saved.
 
 ## Persistence caveat
 
-`data/tours.json` and `data/bookings.json` are plain files on disk, which is
-what lets the admin dashboard change a Chat ID with zero redeploys. If you
-deploy somewhere with an **ephemeral filesystem** that wipes local files on
-every restart/deploy (common on some free hosting tiers), attach a
-persistent volume/disk to the `data/` folder, or swap `lib/store.js` for a
-real database — nothing else in the app needs to change.
+`data/tours.json`, `data/bookings.json`, and everything under `uploads/` are
+plain files on disk. If you deploy somewhere with an **ephemeral
+filesystem** that wipes local files on every restart/redeploy (this
+includes Render's free tier disk), attach a persistent disk to the app, or
+swap `lib/store.js` (and the upload path in `server.js`) for real storage —
+nothing else in the app needs to change.

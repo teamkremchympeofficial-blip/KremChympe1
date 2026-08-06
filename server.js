@@ -16,6 +16,8 @@
 
 require('dotenv').config();
 
+const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
@@ -30,6 +32,7 @@ const auth = require('./lib/auth');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
@@ -56,6 +59,22 @@ const upload = multer({
   },
 });
 
+// The main booking+receipt submission only ever takes an image (the
+// visitor's payment screenshot) — no PDFs here.
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const EXT_BY_MIME = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };
+
+const uploadReceiptImage = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_UPLOAD_BYTES },
+  fileFilter(req, file, cb) {
+    if (!ALLOWED_IMAGE_TYPES.has(file.mimetype)) {
+      return cb(new Error('UNSUPPORTED_FILE_TYPE'));
+    }
+    cb(null, true);
+  },
+});
+
 // -------------------------------------------------------- rate limiting --
 
 // Booking submissions: generous but bounded, to blunt basic spam/abuse.
@@ -74,6 +93,16 @@ const loginLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many login attempts. Please try again later.' },
+});
+
+// Status polling: the confirmation page checks every ~4s while waiting on
+// the guide, so this needs to be generous for a single visitor's session.
+const statusLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 150,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please try again shortly.' },
 });
 
 // ------------------------------------------------------------- helpers --
@@ -113,17 +142,21 @@ function formatBookingMessage(b) {
     `📧 Email: ${b.email || '-'}`,
     `👥 Number of Persons: ${b.persons}`,
     `📅 Tour Date: ${b.date}`,
-    `🏕 Camping: ${b.camping ? 'Yes' : 'No'}`,
     '━━━━━━━━━━━━━━━━━━',
     'Selected Services',
     services,
     '━━━━━━━━━━━━━━━━━━',
     `💰 Total Amount: ₹${inr(b.total)}`,
+    `✅ Amount Paid Now: ₹${inr(b.paidNow)}`,
+    `⏳ Balance Due: ₹${inr(Math.max((Number(b.total) || 0) - (Number(b.paidNow) || 0), 0))}`,
+    `💳 Payment Method: ${b.paymentMethod || '-'}`,
     `⏰ Booking Time: ${b.bookingTime}`,
-    '',
-    'Payment Status:',
-    '🟡 Awaiting Payment Receipt',
   ].join('\n');
+}
+
+// Telegram photo captions are capped at 1024 characters.
+function clampCaption(text) {
+  return text.length > 1024 ? `${text.slice(0, 1000)}\n…` : text;
 }
 
 function formatReceiptCaption(b) {
@@ -156,13 +189,18 @@ function validateBookingInput(body) {
 
 // ----------------------------------------------------------- public API --
 
-// Create a booking and silently notify the assigned guide on Telegram.
-app.post('/api/bookings', bookingLimiter, async (req, res) => {
+// Create a booking: accepts the booking details AND the payment receipt
+// image together (multipart/form-data), and silently sends both to the
+// assigned guide on Telegram as one message with Confirm/Cancel buttons.
+app.post('/api/bookings', bookingLimiter, uploadReceiptImage.single('receipt'), async (req, res) => {
   const body = req.body || {};
 
   const errors = validateBookingInput(body);
   if (errors.length) {
     return res.status(400).json({ error: 'Invalid booking data.', details: errors });
+  }
+  if (!req.file) {
+    return res.status(400).json({ error: 'A payment receipt image is required.' });
   }
 
   const tour = store.getTourById(body.tourId);
@@ -176,12 +214,23 @@ app.post('/api/bookings', bookingLimiter, async (req, res) => {
   const idempotencyKey = req.get('Idempotency-Key') || body.idempotencyKey || null;
   const existing = store.findRecentDuplicate(idempotencyKey);
   if (existing) {
-    return res.status(200).json({ bookingId: existing.id, duplicate: true });
+    return res.status(200).json({ bookingId: existing.id, duplicate: true, status: existing.status });
+  }
+
+  let services;
+  if (typeof body.services === 'string') {
+    try { services = JSON.parse(body.services); } catch (_) { services = undefined; }
+  } else if (Array.isArray(body.services)) {
+    services = body.services;
   }
 
   const now = new Date();
+  const bookingId = generateBookingId();
+  const ext = EXT_BY_MIME[req.file.mimetype] || '.jpg';
+  const receiptFilename = `${bookingId}${ext}`;
+
   const booking = {
-    id: generateBookingId(),
+    id: bookingId,
     idempotencyKey,
     tourId: tour.id,
     tourName: tour.name,
@@ -190,34 +239,130 @@ app.post('/api/bookings', bookingLimiter, async (req, res) => {
     email: body.email ? String(body.email).trim() : '',
     persons: Number(body.persons),
     date: String(body.date),
-    camping: !!body.camping,
-    services: Array.isArray(body.services) ? body.services : undefined,
+    camping: !!(body.camping === true || body.camping === 'true'),
+    services: Array.isArray(services) ? services : undefined,
     total: Number(body.total),
     paidNow: Number(body.paidNow) || 0,
     paymentMethod: body.paymentMethod || '',
     bookingTime: formatTimestamp(now),
     createdAt: now.toISOString(),
-    status: 'awaiting_receipt',
+    status: 'pending', // pending | confirmed | cancelled — driven live by the guide's Telegram button tap
+    receiptFilename,
     notifySent: false,
   };
+
+  try {
+    await fsp.mkdir(UPLOADS_DIR, { recursive: true });
+    await fsp.writeFile(path.join(UPLOADS_DIR, receiptFilename), req.file.buffer);
+  } catch (err) {
+    console.error(`[bookings] failed to save receipt for ${booking.id}:`, err.message);
+    return res.status(500).json({ error: 'Could not save your receipt. Please try again.' });
+  }
 
   await store.saveBooking(booking);
 
   try {
-    await telegram.sendMessage(tour.chatId, formatBookingMessage(booking));
-    await store.updateBooking(booking.id, { notifySent: true });
+    const caption = clampCaption(formatBookingMessage(booking));
+    const replyMarkup = {
+      inline_keyboard: [[
+        { text: '✅ Confirm Booking', callback_data: `confirm:${booking.id}` },
+        { text: '❌ Cancel', callback_data: `cancel:${booking.id}` },
+      ]],
+    };
+    const result = await telegram.sendPhoto(tour.chatId, req.file.buffer, receiptFilename, caption, replyMarkup);
+    const telegramChatId = result && result.result && result.result.chat && result.result.chat.id;
+    const telegramMessageId = result && result.result && result.result.message_id;
+    await store.updateBooking(booking.id, { notifySent: true, telegramChatId, telegramMessageId });
   } catch (err) {
     // We deliberately do NOT fail the booking if the Telegram notification
-    // fails — the customer already has a valid booking. We log it so staff
-    // can follow up, and the failure is visible in booking status.
+    // fails — the customer's receipt is already safely saved. We log it so
+    // staff can follow up, and the failure is visible in booking status.
     console.error(`[bookings] Telegram notify failed for ${booking.id}:`, err.message);
     await store.updateBooking(booking.id, { notifySent: false, notifyError: err.message });
   }
 
-  res.status(201).json({ bookingId: booking.id });
+  res.status(201).json({ bookingId: booking.id, status: booking.status });
 });
 
-// Upload + forward a payment receipt for an existing booking.
+// Lightweight status check, polled by the confirmation page while it waits
+// for the guide to confirm or cancel from Telegram.
+app.get('/api/bookings/:id/status', statusLimiter, (req, res) => {
+  const booking = store.getBookingById(req.params.id);
+  if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+  res.json({ bookingId: booking.id, status: booking.status });
+});
+
+// Lets the visitor download the receipt image they submitted (shown once
+// their booking is confirmed).
+app.get('/api/bookings/:id/receipt-file', async (req, res) => {
+  const booking = store.getBookingById(req.params.id);
+  if (!booking || !booking.receiptFilename) {
+    return res.status(404).json({ error: 'Receipt not found.' });
+  }
+  const filePath = path.join(UPLOADS_DIR, booking.receiptFilename);
+  try {
+    await fsp.access(filePath, fs.constants.R_OK);
+  } catch (_) {
+    return res.status(404).json({ error: 'Receipt file not found.' });
+  }
+  res.download(filePath, `receipt-${booking.id}${path.extname(booking.receiptFilename)}`);
+});
+
+// Telegram calls this when the guide taps Confirm/Cancel under the booking
+// message. Protected by a shared secret Telegram sends back on every
+// webhook request (see .env.example: TELEGRAM_WEBHOOK_SECRET).
+app.post('/api/telegram/webhook', async (req, res) => {
+  const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (!expectedSecret) {
+    console.warn('[telegram webhook] TELEGRAM_WEBHOOK_SECRET is not set — rejecting webhook call.');
+    return res.status(501).end();
+  }
+  if (req.get('X-Telegram-Bot-Api-Secret-Token') !== expectedSecret) {
+    return res.status(401).end();
+  }
+
+  // Always ack fast — Telegram doesn't need us to finish processing first.
+  res.status(200).end();
+
+  try {
+    const callback = req.body && req.body.callback_query;
+    if (!callback || typeof callback.data !== 'string') return;
+
+    const [action, bookingId] = callback.data.split(':');
+    if (action !== 'confirm' && action !== 'cancel') return;
+
+    const booking = store.getBookingById(bookingId);
+    if (!booking) {
+      return telegram.answerCallbackQuery(callback.id, 'Booking not found.');
+    }
+    if (booking.status !== 'pending') {
+      return telegram.answerCallbackQuery(callback.id, `Already ${booking.status}.`);
+    }
+
+    const newStatus = action === 'confirm' ? 'confirmed' : 'cancelled';
+    await store.updateBooking(booking.id, { status: newStatus, decidedAt: new Date().toISOString() });
+
+    await telegram.answerCallbackQuery(
+      callback.id,
+      action === 'confirm' ? 'Marked as confirmed ✅' : 'Marked as cancelled — visitor will see "waiting confirmation".'
+    );
+
+    const chatId = callback.message && callback.message.chat && callback.message.chat.id;
+    const messageId = callback.message && callback.message.message_id;
+    const decisionLine = action === 'confirm' ? '✅ CONFIRMED by guide' : '❌ CANCELLED by guide';
+    const baseCaption = clampCaption(formatBookingMessage(booking));
+    if (chatId && messageId) {
+      await telegram.editMessageCaption(chatId, messageId, `${baseCaption}\n\n${decisionLine}`);
+    }
+  } catch (err) {
+    console.error('[telegram webhook] error handling callback:', err.message);
+  }
+});
+
+// Upload + forward a payment receipt for an existing booking. Kept for
+// compatibility with the alternate in-site receipt-upload flow — the main
+// booking page above now sends the receipt together with the booking, so
+// this route is no longer used by it.
 app.post('/api/bookings/:id/receipt', upload.single('receipt'), async (req, res) => {
   const booking = store.getBookingById(req.params.id);
   if (!booking) {
@@ -324,11 +469,49 @@ app.delete('/api/admin/tours/:id/chatid', auth.requireAdmin, async (req, res) =>
   res.json({ tour: updated });
 });
 
+// Add a brand-new tour (its own guide + Telegram chat id). Chat id is
+// optional at creation time — it can be filled in afterwards from the same
+// dashboard, same as any other tour.
+app.post('/api/admin/tours', auth.requireAdmin, async (req, res) => {
+  const { name, guideLabel, chatId } = req.body || {};
+  if (typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'Tour name is required.' });
+  }
+  if (chatId && (typeof chatId !== 'string' || !CHAT_ID_PATTERN.test(chatId.trim()))) {
+    return res.status(400).json({ error: 'Chat ID must look like a Telegram chat id, e.g. -100123456789.' });
+  }
+  const tour = await store.addTour({ name, guideLabel, chatId });
+  res.status(201).json({ tour });
+});
+
+// Delete a tour entirely. This does not touch past bookings — it only
+// stops the tour from being selectable/notified going forward.
+app.delete('/api/admin/tours/:id', auth.requireAdmin, async (req, res) => {
+  const removed = await store.deleteTour(req.params.id);
+  if (!removed) return res.status(404).json({ error: 'Tour not found.' });
+  res.json({ success: true });
+});
+
 // ------------------------------------------------------------------------
 
 app.listen(PORT, () => {
   console.log(`Booking server listening on port ${PORT}`);
   if (!auth.isConfigured()) {
     console.warn('[startup] ADMIN_PASSWORD_HASH is not set — the admin dashboard cannot be logged into yet.');
+  }
+
+  // Registers the Telegram webhook (for the guide's Confirm/Cancel button
+  // taps) against this deployment's public URL. Safe to run on every boot.
+  const publicUrl = process.env.PUBLIC_URL;
+  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (publicUrl && webhookSecret) {
+    telegram.setWebhook(publicUrl, webhookSecret)
+      .then(() => console.log(`[startup] Telegram webhook registered at ${publicUrl}/api/telegram/webhook`))
+      .catch((err) => console.warn('[startup] Could not register Telegram webhook:', err.message));
+  } else {
+    console.warn(
+      '[startup] PUBLIC_URL and/or TELEGRAM_WEBHOOK_SECRET not set — the guide\'s ' +
+      'Confirm/Cancel buttons in Telegram will not work until both are configured. See .env.example.'
+    );
   }
 });
