@@ -1,0 +1,23 @@
+{
+  "name": "telegram-booking-system",
+  "version": "1.0.0",
+  "description": "Tour booking site with Telegram Bot notifications and a hidden admin dashboard for managing per-tour Telegram Chat IDs.",
+  "main": "server.js",
+  "scripts": {
+    "setup": "node scripts/setup.js",
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "hash-password": "node scripts/hash-password.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.2.0",
+    "multer": "^1.4.5-lts.1"
+  }
+}
