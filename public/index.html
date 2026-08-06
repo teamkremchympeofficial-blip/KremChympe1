@@ -199,13 +199,16 @@
     background:#188038;
     display:flex; align-items:center; justify-content:center;
     margin:0 auto 16px;
+    transition:background .2s ease;
   }
+  .confirm-icon-wrap.cancelled{ background:#C5221F; }
   .confirm-body h1{
     font-size:24px;
     font-weight:600;
     margin:0 0 16px;
     color:#188038;
   }
+  .confirm-body h1.cancelled{ color:#C5221F; }
   .confirm-body p{
     font-size:14px;
     line-height:22px;
@@ -314,11 +317,13 @@
   }
   .status-banner.waiting{ background:#FEF7E0; color:#B06000; }
   .status-banner.confirmed{ background:#E6F4EA; color:#188038; }
+  .status-banner.cancelled{ background:#FCE8E6; color:#C5221F; }
   .status-dot{
     width:9px; height:9px; border-radius:50%; flex-shrink:0;
   }
   .status-banner.waiting .status-dot{ background:#B06000; animation:pulse 1.4s infinite; }
   .status-banner.confirmed .status-dot{ background:#188038; }
+  .status-banner.cancelled .status-dot{ background:#C5221F; }
   @keyframes pulse{
     0%{ opacity:1; } 50%{ opacity:.35; } 100%{ opacity:1; }
   }
@@ -477,7 +482,7 @@ Includes:
       </div>
     </div>
 
-    <div class="card field-card" id="fc-phone">
+    <div class="card field-card" id="fc-phone" data-admin-protected="true">
       <div class="body">
         <div class="field-label">Phone Number<span class="req">*</span></div>
         <input class="answer-input" type="text" id="phone" placeholder="Your answer">
@@ -715,8 +720,9 @@ Includes:
   <div id="pageConfirm" class="hidden">
     <div class="card confirm-card">
       <div class="confirm-body">
-        <div class="confirm-icon-wrap">
-          <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>
+        <div class="confirm-icon-wrap" id="confirmIconWrap">
+          <svg id="confirmIconCheck" viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>
+          <svg id="confirmIconCross" class="hidden" viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </div>
         <h1 id="confirmHeadline">Waiting for Confirmation</h1>
 
@@ -727,6 +733,10 @@ Includes:
         <div class="status-banner confirmed hidden" id="statusBannerConfirmed">
           <span class="status-dot"></span>
           <span>Booking Confirmed ✅ — see you on your tour date!</span>
+        </div>
+        <div class="status-banner cancelled hidden" id="statusBannerCancelled">
+          <span class="status-dot"></span>
+          <span>Booking Cancelled ❌ — please contact the tour guide for details.</span>
         </div>
 
         <div class="confirm-details">
@@ -871,23 +881,44 @@ function pollBookingStatus(bookingId){
 function applyBookingStatus(status){
   const waitingBanner = document.getElementById('statusBannerWaiting');
   const confirmedBanner = document.getElementById('statusBannerConfirmed');
+  const cancelledBanner = document.getElementById('statusBannerCancelled');
   const downloadLink = document.getElementById('downloadReceiptLink');
   const headline = document.getElementById('confirmHeadline');
+  const iconWrap = document.getElementById('confirmIconWrap');
+  const iconCheck = document.getElementById('confirmIconCheck');
+  const iconCross = document.getElementById('confirmIconCross');
+
   if(status === 'confirmed'){
     waitingBanner.classList.add('hidden');
     confirmedBanner.classList.remove('hidden');
-    if(headline) headline.textContent = 'Booking Confirmed';
+    cancelledBanner.classList.add('hidden');
+    if(headline){ headline.textContent = 'Booking Confirmed'; headline.classList.remove('cancelled'); }
+    if(iconWrap) iconWrap.classList.remove('cancelled');
+    if(iconCheck) iconCheck.classList.remove('hidden');
+    if(iconCross) iconCross.classList.add('hidden');
     if(currentBookingId){
       downloadLink.href = '/api/bookings/' + encodeURIComponent(currentBookingId) + '/receipt';
       downloadLink.classList.remove('hidden');
     }
     stopStatusPolling();
+  } else if(status === 'cancelled'){
+    waitingBanner.classList.add('hidden');
+    confirmedBanner.classList.add('hidden');
+    cancelledBanner.classList.remove('hidden');
+    if(headline){ headline.textContent = 'Booking Cancelled'; headline.classList.add('cancelled'); }
+    if(iconWrap) iconWrap.classList.add('cancelled');
+    if(iconCheck) iconCheck.classList.add('hidden');
+    if(iconCross) iconCross.classList.remove('hidden');
+    downloadLink.classList.add('hidden');
+    stopStatusPolling();
   } else {
-    // Pending or cancelled both show "Waiting Confirmation" — a cancel from
-    // the guide means the receipt needs another look, not a hard rejection.
     waitingBanner.classList.remove('hidden');
     confirmedBanner.classList.add('hidden');
-    if(headline) headline.textContent = 'Waiting for Confirmation';
+    cancelledBanner.classList.add('hidden');
+    if(headline){ headline.textContent = 'Waiting for Confirmation'; headline.classList.remove('cancelled'); }
+    if(iconWrap) iconWrap.classList.remove('cancelled');
+    if(iconCheck) iconCheck.classList.remove('hidden');
+    if(iconCross) iconCross.classList.add('hidden');
     downloadLink.classList.add('hidden');
   }
 }
@@ -1071,10 +1102,12 @@ function markInvalid(id, bad){
 function validatePage1(){
   let ok = true;
   const name = document.getElementById('fullName').value.trim();
+  const phone = document.getElementById('phone').value.trim();
   const date = document.getElementById('tourDate').value.trim();
   const people = document.getElementById('people').value.trim();
 
-  markInvalid('fc-name', name==="");            if(name==="") ok=false;
+  markInvalid('fc-name', name==="");             if(name==="") ok=false;
+  markInvalid('fc-phone', phone==="");            if(phone==="") ok=false;
   markInvalid('fc-date', date==="");             if(date==="") ok=false;
   markInvalid('fc-people', people==="");         if(people==="") ok=false;
   markInvalid('fc-payment', selectedPay==="");   if(selectedPay==="") ok=false;
@@ -1192,6 +1225,11 @@ Booking ID: ${currentBookingId}`;
 
     document.getElementById('statusBannerWaiting').classList.remove('hidden');
     document.getElementById('statusBannerConfirmed').classList.add('hidden');
+    document.getElementById('statusBannerCancelled').classList.add('hidden');
+    document.getElementById('confirmIconWrap').classList.remove('cancelled');
+    document.getElementById('confirmIconCheck').classList.remove('hidden');
+    document.getElementById('confirmIconCross').classList.add('hidden');
+    document.getElementById('confirmHeadline').classList.remove('cancelled');
     document.getElementById('downloadReceiptLink').classList.add('hidden');
 
     document.getElementById('pageUPI').classList.add('hidden');
