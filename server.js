@@ -27,6 +27,7 @@ const rateLimit = require('express-rate-limit');
 
 const store = require('./lib/store');
 const telegram = require('./lib/telegram');
+const receipt = require('./lib/receipt');
 const auth = require('./lib/auth');
 
 const app = express();
@@ -292,8 +293,39 @@ app.get('/api/bookings/:id/status', statusLimiter, (req, res) => {
   res.json({ bookingId: booking.id, status: booking.status });
 });
 
-// Lets the visitor download the receipt image they submitted (shown once
-// their booking is confirmed).
+// Generates and returns a fresh, booking-specific PDF receipt (Booking ID,
+// submitted date/time, and the actual advance amount the visitor entered).
+// Only ever available once the guide has confirmed the booking on
+// Telegram — this is enforced here on the server, not just hidden in the
+// UI, so the URL can't be used to see receipt details early.
+app.get('/api/bookings/:id/receipt', async (req, res) => {
+  const booking = store.getBookingById(req.params.id);
+  if (!booking) {
+    return res.status(404).json({ error: 'Booking not found.' });
+  }
+  if (booking.status !== 'confirmed') {
+    return res.status(403).json({ error: 'Receipt is available once your booking is confirmed by the guide.' });
+  }
+
+  try {
+    const tour = store.getTourById(booking.tourId);
+    const pdfBuffer = await receipt.generateReceiptPdf(booking, tour);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="receipt-${booking.id}.pdf"`,
+      'Content-Length': pdfBuffer.length,
+    });
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error(`[receipt] failed to generate PDF for ${booking.id}:`, err.message);
+    res.status(500).json({ error: 'Could not generate receipt. Please try again.' });
+  }
+});
+
+// Lets the visitor download the raw receipt image they submitted as
+// payment proof (kept around for the guide/admin's own reference — the
+// customer-facing "Download Receipt" button now uses the generated PDF
+// receipt above instead).
 app.get('/api/bookings/:id/receipt-file', async (req, res) => {
   const booking = store.getBookingById(req.params.id);
   if (!booking || !booking.receiptFilename) {
