@@ -497,20 +497,14 @@
         <div class="err-text" data-ckey="text.requiredfield">This is a required question</div>
       </div>
     </div>
-    
-    <div class="card field-card" id="fc-people" data-admin-protected="true">
-      <div class="body">
-        <div class="field-label" data-ckey="label.people">Number Of Adult<span class="req">*</span></div>
-        <input class="answer-input" type="text" id="people" placeholder="Your answer">
-        <div class="err-text" data-ckey="text.requiredfield">This is a required question</div>
-        <div class="price-summary" id="priceSummary"></div>
-      </div>
-    </div>
 
     <div class="card field-card" id="fc-people" data-admin-protected="true">
       <div class="body">
-        <div class="field-label" data-ckey="label.people">Number Of children</div>
+        <div class="field-label" data-ckey="label.people">Number Of Adult &amp; childern<span class="req">*</span></div>
         <input class="answer-input" type="text" id="people" placeholder="Your answer">
+        <div class="err-text" data-ckey="text.requiredfield">This is a required question</div>
+        <div class="field-label" style="margin-top:16px;" data-ckey="label.childrenbelow10">Number of children below 10 years (if any)</div>
+        <input class="answer-input" type="text" id="childrenBelow10" placeholder="0">
         <div class="price-summary" id="priceSummary"></div>
       </div>
     </div>
@@ -561,7 +555,7 @@
 
     <div class="card field-card" id="fc-amount-upi" data-admin-protected="true">
       <div class="body">
-        <div class="field-label">Advance payment is required<span class="req">*</span></div>
+        <div class="field-label">How much would you like to pay now?<span class="req">*</span></div>
         <input class="answer-input" type="number" id="payAmountUPI" placeholder="Minimum ₹500" inputmode="numeric">
         <div class="err-text">Enter an amount between ₹500 and the total amount</div>
         <div class="price-summary" id="balancePreviewUPI"></div>
@@ -774,7 +768,7 @@
 // use an absolute URL instead of a relative one. Replace this with your
 // actual Render service URL.
 // ---------------------------------------------------------------------
-const API_BASE = "https://kremchympe1.onrender.com";
+const API_BASE = "https://YOUR-RENDER-APP.onrender.com";
 
 // Fire a silent "wake up" ping to the backend the moment this script
 // runs (before DOMContentLoaded, before the user has even seen the
@@ -797,6 +791,7 @@ const UPI_PAYEE_NAME = "Team Kremchympe Official";
 // set via the Telegram bot come back from the server. The values here are
 // just the fallback shown before that fetch resolves (or if it fails).
 let PRICE_PER_PERSON = 2500;
+let CHILD_PRICE = 200;
 let MIN_PAY_AMOUNT = 500;
 let BATCH_SIZE = 8;
 let ADVANCE_NOTICE_DAYS = 3;
@@ -836,7 +831,7 @@ function renderPackageDesc(){
     '<em>Note:\n' +
     '* Shared batch: ' + BATCH_SIZE + ' people\n' +
     '* Book at least ' + ADVANCE_NOTICE_DAYS + ' days in advance\n' +
-    '* Children below 10 years are free for activities charge, however Entry fee & life jacket will apply: ₹200/child\n' +
+    '* Children below 10 years are free for activities charge, however Entry fee &amp; life jacket will apply: ₹' + CHILD_PRICE.toLocaleString('en-IN') + '/child\n' +
     '* ₹' + MIN_PAY_AMOUNT.toLocaleString('en-IN') + ' advance payment required to confirm booking</em>';
 }
 
@@ -1033,9 +1028,18 @@ function extractPeopleCount(text){
   return nums.reduce((a,b)=>a+b, 0);
 }
 
+function getChildrenCount(){
+  const text = document.getElementById('childrenBelow10').value.trim();
+  if(text === "") return 0;
+  const n = parseInt(text, 10);
+  return isNaN(n) || n < 0 ? 0 : n;
+}
+
 function getTotal(){
   const text = document.getElementById('people').value.trim();
-  return extractPeopleCount(text) * PRICE_PER_PERSON;
+  const count = extractPeopleCount(text);
+  const children = getChildrenCount();
+  return (count * PRICE_PER_PERSON) + (children * CHILD_PRICE);
 }
 
 // suffix is "UPI" or "Bank" — each payment page has its own amount field.
@@ -1061,31 +1065,45 @@ function isAmountValid(suffix){
 function calcPricing(suffix){
   const total = getTotal();
   const count = extractPeopleCount(document.getElementById('people').value.trim());
+  const children = getChildrenCount();
   const paid = isAmountValid(suffix) ? getTypedAmount(suffix) : 0;
   const balance = Math.max(total - paid, 0);
-  return { count, total, paid, balance };
+  return { count, children, total, paid, balance };
 }
 
 // Simple total-only summary (people field on page 1, and top of each payment page).
 function updatePriceSummary(){
   const box = document.getElementById('priceSummary');
   const count = extractPeopleCount(document.getElementById('people').value.trim());
+  const children = getChildrenCount();
   const total = getTotal();
-  if(count > 0){
+  if(count > 0 || children > 0){
     box.classList.add('show');
-    box.innerHTML = `<div class="row total-row"><span>₹${PRICE_PER_PERSON.toLocaleString('en-IN')} × ${count} people</span><span>₹${total.toLocaleString('en-IN')}</span></div>`;
+    let rows = `<div class="row"><span>₹${PRICE_PER_PERSON.toLocaleString('en-IN')} × ${count} people</span><span>₹${(count * PRICE_PER_PERSON).toLocaleString('en-IN')}</span></div>`;
+    if(children > 0){
+      rows += `<div class="row"><span>₹${CHILD_PRICE.toLocaleString('en-IN')} × ${children} child${children > 1 ? 'ren' : ''} below 10</span><span>₹${(children * CHILD_PRICE).toLocaleString('en-IN')}</span></div>`;
+    }
+    rows += `<div class="row total-row"><span>Total</span><span>₹${total.toLocaleString('en-IN')}</span></div>`;
+    box.innerHTML = rows;
   } else {
     box.classList.remove('show');
     box.innerHTML = '';
   }
 }
 document.getElementById('people').addEventListener('input', updatePriceSummary);
+document.getElementById('childrenBelow10').addEventListener('input', updatePriceSummary);
 
 function renderOrderSummary(elId){
   const count = extractPeopleCount(document.getElementById('people').value.trim());
+  const children = getChildrenCount();
   const total = getTotal();
   const box = document.getElementById(elId);
-  box.innerHTML = `<div class="row total-row"><span>₹${PRICE_PER_PERSON.toLocaleString('en-IN')} × ${count || 0} people</span><span>₹${total.toLocaleString('en-IN')}</span></div>`;
+  let rows = `<div class="row"><span>₹${PRICE_PER_PERSON.toLocaleString('en-IN')} × ${count || 0} people</span><span>₹${(count * PRICE_PER_PERSON).toLocaleString('en-IN')}</span></div>`;
+  if(children > 0){
+    rows += `<div class="row"><span>₹${CHILD_PRICE.toLocaleString('en-IN')} × ${children} child${children > 1 ? 'ren' : ''} below 10</span><span>₹${(children * CHILD_PRICE).toLocaleString('en-IN')}</span></div>`;
+  }
+  rows += `<div class="row total-row"><span>Total</span><span>₹${total.toLocaleString('en-IN')}</span></div>`;
+  box.innerHTML = rows;
 }
 
 // Updates placeholder + balance preview for one payment page's amount field.
@@ -1268,7 +1286,7 @@ function submitBooking(){
   const phone = document.getElementById('phone').value.trim();
   const email1 = document.getElementById('email1').value.trim();
   const date = document.getElementById('tourDate').value;
-  const { count, total, paid, balance } = calcPricing(suffix);
+  const { count, children, total, paid, balance } = calcPricing(suffix);
 
   const submitBtn = document.querySelector('#page' + suffix + ' button.gbtn.filled');
   if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'Submitting...'; }
@@ -1282,6 +1300,7 @@ function submitBooking(){
   formData.append('phone', phone);
   formData.append('email', email1);
   formData.append('persons', String(count));
+  formData.append('childrenBelow10', String(children));
   formData.append('date', date);
   formData.append('camping', 'false');
   formData.append('services', JSON.stringify(TOUR_SERVICES));
@@ -1291,7 +1310,7 @@ function submitBooking(){
   formData.append('idempotencyKey', bookingIdempotencyKey);
   formData.append('receipt', receiptFile, receiptFile.name);
 
-  fetch(API_BASE + '/api/bookings', {
+  fetch('/api/bookings', {
     method: 'POST',
     headers: { 'Idempotency-Key': bookingIdempotencyKey },
     body: formData
@@ -1374,6 +1393,7 @@ function clearForm(){
   document.getElementById('email1').value = "";
   document.getElementById('tourDate').value = "";
   document.getElementById('people').value = "";
+  document.getElementById('childrenBelow10').value = "";
   document.getElementById('payAmountUPI').value = "";
   document.getElementById('payAmountBank').value = "";
   document.getElementById('payAmountQR').value = "";
