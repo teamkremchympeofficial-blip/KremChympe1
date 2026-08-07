@@ -53,6 +53,15 @@ const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '')
   .map((s) => s.trim())
   .filter(Boolean);
 
+// If this same server is also serving the booking page itself (same-origin
+// deployment), automatically trust its own PUBLIC_URL. Browsers attach an
+// Origin header to POST requests even when the request is same-origin, so
+// without this a same-origin booking submission would otherwise be
+// rejected by the check below.
+if (process.env.PUBLIC_URL) {
+  ALLOWED_ORIGINS.push(process.env.PUBLIC_URL.replace(/\/+$/, ''));
+}
+
 app.use(cors({
   origin(origin, cb) {
     // No origin header = same-origin request (e.g. curl, the admin
@@ -588,6 +597,19 @@ app.delete('/api/admin/tours/:id', auth.requireAdmin, async (req, res) => {
   const removed = await store.deleteTour(req.params.id);
   if (!removed) return res.status(404).json({ error: 'Tour not found.' });
   res.json({ success: true });
+});
+
+// Final safety net: ANY error that reaches here (CORS rejections, unhandled
+// exceptions, etc.) still gets sent back as JSON, never Express's default
+// HTML error page. The frontend always calls res.json() on the response, so
+// an HTML page there breaks with "Unexpected token '<'" — this prevents
+// that failure mode regardless of what throws.
+app.use((err, req, res, next) => {
+  console.error('[unhandled error]', (err && err.stack) || err);
+  if (res.headersSent) return next(err);
+  res.status(err && err.message === 'Not allowed by CORS' ? 403 : 500).json({
+    error: 'Something went wrong. Please try again.',
+  });
 });
 
 // ------------------------------------------------------------------------
