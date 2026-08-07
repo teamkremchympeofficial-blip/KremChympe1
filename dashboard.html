@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --purple:#5746E4;
+    --purple-btn:#4B39D6;
+    --purple-btn-dark:#3D2CC0;
+    --page-bg:#EEEDFB;
+    --text:#1F1F1F;
+    --gray-text:#5F6368;
+    --border:#DADCE0;
+    --red:#D93025;
+    --green:#188038;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--page-bg);
+    color:var(--text);
+    font-family:'Roboto', Arial, sans-serif;
+    min-height:100vh;
+  }
+  .wrap{ max-width:560px; margin:0 auto; padding:40px 16px 60px; }
+  .card{
+    background:#fff;
+    border-radius:8px;
+    box-shadow:0 1px 2px rgba(60,64,67,0.15), 0 1px 3px rgba(60,64,67,0.1);
+    margin-bottom:16px;
+    padding:24px;
+  }
+  h1{ font-size:22px; font-weight:500; margin:0 0 4px; }
+  .sub{ font-size:13px; color:var(--gray-text); margin:0 0 20px; }
+  label{ display:block; font-size:13px; color:var(--gray-text); margin-bottom:6px; }
+  input[type="password"], input[type="text"]{
+    width:100%;
+    border:1px solid var(--border);
+    border-radius:6px;
+    padding:10px 12px;
+    font-family:'Roboto',Arial,sans-serif;
+    font-size:14px;
+    margin-bottom:14px;
+  }
+  input:focus{ outline:none; border-color:var(--purple); }
+  button{
+    font-family:'Roboto',Arial,sans-serif;
+    font-size:14px;
+    font-weight:500;
+    padding:10px 20px;
+    border-radius:6px;
+    cursor:pointer;
+    border:1px solid transparent;
+  }
+  button.filled{ background:var(--purple-btn); color:#fff; }
+  button.filled:hover{ background:var(--purple-btn-dark); }
+  button.outline{ background:#fff; color:var(--purple-btn-dark); border:1px solid var(--border); }
+  button.outline:hover{ background:#F3F0FF; }
+  button.danger{ background:#fff; color:var(--red); border:1px solid #F5C2C0; }
+  button.danger:hover{ background:#FDEDED; }
+  button:disabled{ opacity:.6; cursor:not-allowed; }
+  .err{ color:var(--red); font-size:13px; margin:-6px 0 14px; display:none; }
+  .tour-row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 0; border-top:1px solid var(--border);
+  }
+  .tour-row:first-of-type{ border-top:none; }
+  .tour-name{ font-weight:500; font-size:15px; margin-bottom:4px; }
+  .chat-id{ font-size:13px; color:var(--gray-text); font-family:monospace; }
+  .chat-id.empty{ color:var(--red); }
+  .tour-actions{ display:flex; gap:8px; flex-shrink:0; }
+  .topbar{ display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+  .topbar h1{ margin:0; }
+  .hidden{ display:none !important; }
+  .toast{
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    background:#20143F; color:#fff; padding:10px 18px; border-radius:6px;
+    font-size:13px; opacity:0; pointer-events:none; transition:opacity .2s;
+  }
+  .toast.show{ opacity:1; }
+  .inline-edit{ display:flex; gap:6px; align-items:center; }
+  .inline-edit input{ margin:0; width:180px; }
+  .note{ font-size:12px; color:var(--gray-text); margin-top:18px; line-height:1.5; }
+  .add-tour-row{ margin-top:16px; }
+  .add-tour-form{
+    margin-top:16px; padding-top:16px; border-top:1px solid var(--border);
+  }
+  .add-tour-actions{ display:flex; gap:8px; }
+  .delete-tour-row{ text-align:right; margin-top:2px; }
+  .delete-tour-row button{ font-size:12px; padding:4px 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="loginCard" class="card">
+    <h1>Admin Login</h1>
+    <p class="sub">Enter the admin passcode to manage tour guide Telegram Chat IDs.</p>
+    <label for="passcode">Passcode</label>
+    <input type="password" id="passcode" autocomplete="current-password">
+    <div class="err" id="loginErr"></div>
+    <button class="filled" id="loginBtn" onclick="login()">Log in</button>
+  </div>
+
+  <div id="dashboard" class="card hidden">
+    <div class="topbar">
+      <h1>Telegram Chat ID Manager</h1>
+      <button class="outline" onclick="logout()">Log out</button>
+    </div>
+    <p class="sub">For each tour, view, change, or remove the assigned guide's Telegram Chat ID. Changes apply to new bookings immediately.</p>
+    <div id="tourList"></div>
+
+    <div class="add-tour-row" id="addTourRow">
+      <button class="outline" onclick="showAddTourForm()">+ Add New Tour</button>
+    </div>
+    <div class="add-tour-form hidden" id="addTourForm">
+      <label for="newTourName">Tour name</label>
+      <input type="text" id="newTourName" placeholder="e.g. Krem Mawmluh Cave Tour">
+      <label for="newTourChatId">Telegram Chat ID (optional — can add later)</label>
+      <input type="text" id="newTourChatId" placeholder="-100123456789">
+      <div class="err" id="addTourErr"></div>
+      <div class="add-tour-actions">
+        <button class="filled" onclick="saveNewTour()">Add Tour</button>
+        <button class="outline" onclick="hideAddTourForm()">Cancel</button>
+      </div>
+    </div>
+
+    <div class="note">
+      Removing a Chat ID stops new booking notifications for that tour until a new one is added. Existing bookings are unaffected.
+      Deleting a tour removes it from this dashboard and the booking page entirely — past bookings are unaffected, but this cannot be undone.
+      Bot token, bot settings, and message templates cannot be changed from this dashboard.
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+async function api(path, opts) {
+  const res = await fetch(path, {
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  let body = null;
+  try { body = await res.json(); } catch (_) {}
+  if (!res.ok) {
+    const err = new Error((body && body.error) || 'Request failed');
+    err.status = res.status;
+    throw err;
+  }
+  return body;
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+async function checkSession() {
+  try {
+    const { authenticated } = await api('/api/admin/session');
+    if (authenticated) {
+      document.getElementById('loginCard').classList.add('hidden');
+      document.getElementById('dashboard').classList.remove('hidden');
+      loadTours();
+    }
+  } catch (_) { /* not authenticated, stay on login */ }
+}
+
+async function login() {
+  const passcode = document.getElementById('passcode').value;
+  const errEl = document.getElementById('loginErr');
+  const btn = document.getElementById('loginBtn');
+  errEl.style.display = 'none';
+  btn.disabled = true;
+  try {
+    await api('/api/admin/login', { method: 'POST', body: JSON.stringify({ password: passcode }) });
+    document.getElementById('passcode').value = '';
+    document.getElementById('loginCard').classList.add('hidden');
+    document.getElementById('dashboard').classList.remove('hidden');
+    loadTours();
+  } catch (err) {
+    errEl.textContent = err.status === 429 ? 'Too many attempts. Try again later.' : 'Incorrect passcode.';
+    errEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function logout() {
+  await api('/api/admin/logout', { method: 'POST' });
+  document.getElementById('dashboard').classList.add('hidden');
+  document.getElementById('loginCard').classList.remove('hidden');
+}
+
+async function loadTours() {
+  const { tours } = await api('/api/admin/tours');
+  const list = document.getElementById('tourList');
+  list.innerHTML = '';
+  tours.forEach((tour) => {
+    const row = document.createElement('div');
+    row.className = 'tour-row';
+    row.id = `tour-${tour.id}`;
+    row.innerHTML = `
+      <div>
+        <div class="tour-name">${escapeHtml(tour.guideLabel)}</div>
+        <div class="chat-id ${tour.chatId ? '' : 'empty'}" id="chatid-${tour.id}">
+          ${tour.chatId ? 'Current Chat ID: ' + escapeHtml(tour.chatId) : 'No Chat ID set — bookings will not be sent'}
+        </div>
+      </div>
+      <div>
+        <div class="tour-actions">
+          <button class="outline" onclick="startEdit('${tour.id}')">✏️ Change Chat ID</button>
+          <button class="danger" onclick="removeChatId('${tour.id}')" ${tour.chatId ? '' : 'disabled'}>🗑 Remove</button>
+        </div>
+        <div class="delete-tour-row">
+          <button class="danger" onclick="deleteTour('${tour.id}', '${escapeHtml(tour.guideLabel).replace(/'/g, "\\'")}')">Delete Tour</button>
+        </div>
+      </div>
+    `;
+    list.appendChild(row);
+  });
+}
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s == null ? '' : String(s);
+  return div.innerHTML;
+}
+
+function startEdit(tourId) {
+  const row = document.getElementById(`tour-${tourId}`);
+  const actions = row.querySelector('.tour-actions');
+  actions.innerHTML = `
+    <div class="inline-edit">
+      <input type="text" id="input-${tourId}" placeholder="-100123456789">
+      <button class="filled" onclick="saveChatId('${tourId}')">Save</button>
+      <button class="outline" onclick="loadTours()">Cancel</button>
+    </div>
+  `;
+  document.getElementById(`input-${tourId}`).focus();
+}
+
+async function saveChatId(tourId) {
+  const input = document.getElementById(`input-${tourId}`);
+  const chatId = input.value.trim();
+  try {
+    await api(`/api/admin/tours/${tourId}/chatid`, { method: 'PUT', body: JSON.stringify({ chatId }) });
+    showToast('Chat ID updated.');
+    loadTours();
+  } catch (err) {
+    alert(err.message || 'Could not update Chat ID.');
+  }
+}
+
+async function removeChatId(tourId) {
+  if (!confirm('Remove this Chat ID? Future bookings for this tour will not be sent to Telegram until a new one is added.')) return;
+  try {
+    await api(`/api/admin/tours/${tourId}/chatid`, { method: 'DELETE' });
+    showToast('Chat ID removed.');
+    loadTours();
+  } catch (err) {
+    alert(err.message || 'Could not remove Chat ID.');
+  }
+}
+
+function showAddTourForm() {
+  document.getElementById('addTourRow').classList.add('hidden');
+  document.getElementById('addTourForm').classList.remove('hidden');
+  document.getElementById('addTourErr').style.display = 'none';
+  document.getElementById('newTourName').focus();
+}
+
+function hideAddTourForm() {
+  document.getElementById('newTourName').value = '';
+  document.getElementById('newTourChatId').value = '';
+  document.getElementById('addTourErr').style.display = 'none';
+  document.getElementById('addTourForm').classList.add('hidden');
+  document.getElementById('addTourRow').classList.remove('hidden');
+}
+
+async function saveNewTour() {
+  const name = document.getElementById('newTourName').value.trim();
+  const chatId = document.getElementById('newTourChatId').value.trim();
+  const errEl = document.getElementById('addTourErr');
+  errEl.style.display = 'none';
+  if (!name) {
+    errEl.textContent = 'Tour name is required.';
+    errEl.style.display = 'block';
+    return;
+  }
+  try {
+    await api('/api/admin/tours', { method: 'POST', body: JSON.stringify({ name, chatId: chatId || undefined }) });
+    showToast('Tour added.');
+    hideAddTourForm();
+    loadTours();
+  } catch (err) {
+    errEl.textContent = err.message || 'Could not add tour.';
+    errEl.style.display = 'block';
+  }
+}
+
+async function deleteTour(tourId, tourLabel) {
+  if (!confirm(`Delete "${tourLabel}" entirely? This removes it from the booking page and cannot be undone. Past bookings are unaffected.`)) return;
+  try {
+    await api(`/api/admin/tours/${tourId}`, { method: 'DELETE' });
+    showToast('Tour deleted.');
+    loadTours();
+  } catch (err) {
+    alert(err.message || 'Could not delete tour.');
+  }
+}
+
+document.getElementById('passcode').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') login();
+});
+
+checkSession();
+</script>
+</body>
+</html>

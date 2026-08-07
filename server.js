@@ -305,7 +305,7 @@ app.post('/api/bookings', bookingLimiter, uploadReceiptImage.single('receipt'), 
     const replyMarkup = {
       inline_keyboard: [[
         { text: '✅ Confirm Booking', callback_data: `confirm:${booking.id}` },
-        { text: '❌ Cancel', callback_data: `cancel:${booking.id}` },
+        { text: '❌ Reject', callback_data: `cancel:${booking.id}` },
       ]],
     };
     const result = await telegram.sendPhoto(tour.chatId, req.file.buffer, receiptFilename, caption, replyMarkup);
@@ -442,12 +442,12 @@ app.post('/api/telegram/webhook', async (req, res) => {
 
     await telegram.answerCallbackQuery(
       callback.id,
-      action === 'confirm' ? 'Marked as confirmed ✅' : 'Marked as cancelled — visitor will see "waiting confirmation".'
+      action === 'confirm' ? 'Marked as confirmed ✅' : 'Marked as rejected — visitor screen updates automatically.'
     );
 
     const chatId = callback.message && callback.message.chat && callback.message.chat.id;
     const messageId = callback.message && callback.message.message_id;
-    const decisionLine = action === 'confirm' ? '✅ CONFIRMED by guide' : '❌ CANCELLED by guide';
+    const decisionLine = action === 'confirm' ? '✅ CONFIRMED by guide' : '❌ REJECTED by guide';
     const baseCaption = clampCaption(formatBookingMessage(booking));
     if (chatId && messageId) {
       await telegram.editMessageCaption(chatId, messageId, `${baseCaption}\n\n${decisionLine}`);

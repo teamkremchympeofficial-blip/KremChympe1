@@ -724,7 +724,7 @@
         </div>
         <div class="status-banner cancelled hidden" id="statusBannerCancelled">
           <span class="status-dot"></span>
-          <span data-ckey="confirm.status.cancelled">Booking Cancelled ❌ — please contact the tour guide for details.</span>
+          <span data-ckey="confirm.status.cancelled">Booking Rejected ❌ — please contact the tour guide for details.</span>
         </div>
 
         <div class="confirm-details">
@@ -1000,7 +1000,7 @@ function applyBookingStatus(status){
     waitingBanner.classList.add('hidden');
     confirmedBanner.classList.add('hidden');
     cancelledBanner.classList.remove('hidden');
-    if(headline){ headline.textContent = ctext('confirm.headline.cancelled', 'Booking Cancelled'); headline.classList.add('cancelled'); }
+    if(headline){ headline.textContent = ctext('confirm.headline.cancelled', 'Booking Rejected'); headline.classList.add('cancelled'); }
     if(iconWrap) iconWrap.classList.add('cancelled');
     if(iconCheck) iconCheck.classList.add('hidden');
     if(iconCross) iconCross.classList.remove('hidden');
