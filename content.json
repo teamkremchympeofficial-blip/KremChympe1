@@ -1,0 +1,17 @@
+{
+  "text": {},
+  "package": {
+    "pricePerPerson": 2500,
+    "minPayAmount": 500,
+    "batchSize": 8,
+    "advanceNoticeDays": 3,
+    "services": [
+      "4×4 Jeep",
+      "Tour Guide",
+      "First aid & Safety gears",
+      "Adventure Activities",
+      "Entry & Registration Fees",
+      "Lunch"
+    ]
+  }
+}
